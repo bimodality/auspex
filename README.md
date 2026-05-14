@@ -12,6 +12,51 @@ Single Rust binary. Local Ollama. Local fastembed. Local embedded HTTP server. *
 
 ---
 
+### what the radar feed actually surfaces
+
+After each run, the radar diffs against the previous snapshot and ranks every change by computed urgency. A real feed at 30 people in your network reads something like:
+
+```
+RADAR · 12 of 31 insights this run · sorted by urgency
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  alice → bob       tone shifted: curious → dismissive (warmth −0.71)
+●  charlie           new high-stakes claim: "i'm burned out"  [unverifiable]
+●  alice ↔ bob       relationship_cooling · interaction −68% vs baseline
+◐  bob ↔ charlie     alliance_forming · shared topics +18% · warmth +0.41
+◐  alice             theme 'avoids confrontation' [FADING → ACTIVE]
+◐  bob               cognitive_shift · integrative complexity ↑↑ +47%
+○  diana → alice     asymmetric_investment · 18 acts vs 3 return
+○  charlie           confidence_jump · 'analytical mindset' 0.71 → 0.91
+○  bob               new_self_claim "i don't get jealous"   [inconsistent]
+·  eve ↔ frank       new_pair · 7 recent exchanges
+·  alice             new_theme 'romanticizes effort' (12 msgs · conf 0.62)
+·  charlie           cognitive_shift · self-monitoring ↓ −15%
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  critical  ≥ 0.75      ◐  high  ≥ 0.55      ○  medium  ≥ 0.35      ·  low
+```
+
+Each line clicks through to the supporting evidence — the actual messages that triggered the diff. **None of these are LLM opinions.** Confidence is computed from counted falsification probes. Warmth is computed from directional tone histograms. Asymmetric investment is computed from reply/initiation counts. The LLM's job is to extract structured signal; the math decides what's important.
+
+### how it compares to the alternative
+
+```
+                       typical LLM personality tool    │    auspex
+─────────────────────────────────────────────────────────┼───────────────────────────────
+   why does it think X?            shrug                │    every claim → msg_id citation
+   is the confidence real?         model types a number │    (s+1)/(s+3·f+2) from probes
+   handles self-claims how?        folds them in        │    separate reconciliation stream
+   detects what changed since…?    re-run, read again   │    ranked diff feed, urgency-scored
+   issues an IQ or MBTI?           yes, confidently     │    refuses, hardcoded
+   models the network?             nope, individuals    │    real pairwise dynamics
+   constant validity check?        none                 │    Phase 4 adversarial probes
+   sends data anywhere?            cloud API            │    100% local, no telemetry
+   incremental on new data?        no, redo from zero   │    fingerprint short-circuits
+   ─────────────────────────────────────────────────────┼───────────────────────────────
+   what you get                    smooth prose         │    a falsifiable measurement
+```
+
+---
+
 ## This tool exists because most of the alternatives are bad
 
 The current state of "AI personality analysis" is one of two failure modes:
