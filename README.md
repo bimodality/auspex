@@ -1,10 +1,16 @@
 # auspex
 
+> Your chat archives know things you don't.
+
+Drop your message exports in. Open a graph in your browser. Click any person and you see a profile of who they actually are — identity, anxieties, what they're growing into, where they're vulnerable — built from how they write, not from what they say about themselves. Click any line between two people and you see how that relationship is moving: reply latencies, tone toward each other, who's investing more, what topics they share. Re-run after a few weeks of new chat and a feed surfaces what's actually *changing* in your network — someone cooling on someone else, an alliance forming, a tone shifting, a self-claim that doesn't match the behavior.
+
+Everything is local. The text never leaves your machine. No cloud, no telemetry, no remote API, no update server.
+
 > Most LLM personality tools are horoscopes with a tech stack. This one isn't.
 
-**Network Intelligence over your own chat archives.** Point it at a folder of chat exports. Get a graph of the people in your life with evidence-cited psychological profiles, computed-confidence themes, and a ranked feed of what's *changing* in your network — relationships cooling, themes activating, tones shifting toward specific people, alliances forming. Update the data, re-run, get the delta.
+Every claim auspex makes is cited back to the exact message it came from. Every confidence number is computed from how many attempts to *disprove* the claim succeeded — not typed by the model. Self-statements like "i'm an INTJ" or "i have IQ 145" are pulled into a separate reconciliation stream and verdict-tagged against behavioral evidence; they never silently fold into a trait profile. The pipeline refuses to issue IQ or MBTI scores from chat text, because neither has defensible psychometric grounding.
 
-Single Rust binary. Local Ollama. Local fastembed. Local embedded HTTP server. **Nothing leaves the machine. No telemetry. No remote APIs. No SaaS waiting list.**
+Single Rust binary, ~7,300 LoC across 14 modules. No async runtime. Embedded HTTP server (`std::net`). Embedded D3 graph + sidebar + chat panel. Local Ollama for inference. Local fastembed for retrieval.
 
 ![auspex UI on the built-in demo corpus — radar feed on the left, force-directed network in the center, evidence-cited sidebar on the right](assets/example.png)
 
