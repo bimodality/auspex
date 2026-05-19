@@ -2,21 +2,13 @@
 
 > Your chat archives know things you don't.
 
-Drop your message exports in. Open a graph in your browser. Click any person and you see a profile of who they actually are — identity, anxieties, what they're growing into, where they're vulnerable — built from how they write, not from what they say about themselves. Click any line between two people and you see how that relationship is moving: reply latencies, tone toward each other, who's investing more, what topics they share. Re-run after a few weeks of new chat and a feed surfaces what's actually *changing* in your network — someone cooling on someone else, an alliance forming, a tone shifting, a self-claim that doesn't match the behavior.
+Drop your chat exports in. Get back a map of your social network — who's drifting from whom, whose tone toward whom shifted, what people in your life are really like vs. what they say about themselves. Click any person, see who they actually are. Click any line between two people, see how that relationship is moving. Re-run after new chat arrives and a feed surfaces what changed.
 
-Everything is local. The text never leaves your machine. No cloud, no telemetry, no remote API, no update server.
-
-> Most LLM personality tools are horoscopes with a tech stack. This one isn't.
-
-Every claim auspex makes is cited back to the exact message it came from. Every confidence number is computed from how many attempts to *disprove* the claim succeeded — not typed by the model. Self-statements like "i'm an INTJ" or "i have IQ 145" are pulled into a separate reconciliation stream and verdict-tagged against behavioral evidence; they never silently fold into a trait profile. The pipeline refuses to issue IQ or MBTI scores from chat text, because neither has defensible psychometric grounding.
-
-Single Rust binary, ~7,300 LoC across 14 modules. No async runtime. Embedded HTTP server (`std::net`). Embedded D3 graph + sidebar + chat panel. Local Ollama for inference. Local fastembed for retrieval.
+Everything is local. The text never leaves your machine. No cloud, no telemetry, no remote API.
 
 ![auspex UI on the built-in demo corpus — radar feed on the left, force-directed network in the center, evidence-cited sidebar on the right](assets/example.png)
 
 *Screenshot above is the demo corpus (3 synthetic people, no actual LLM passes run). Real runs populate themes, predictions, cited quotes, pair-edge warmth, and the insight feed.*
-
----
 
 ### what the radar feed actually surfaces
 
@@ -43,6 +35,8 @@ RADAR · 12 of 31 insights this run · sorted by urgency
 
 Each line clicks through to the supporting evidence — the actual messages that triggered the diff. **None of these are LLM opinions.** Confidence is computed from counted falsification probes. Warmth is computed from directional tone histograms. Asymmetric investment is computed from reply/initiation counts. The LLM's job is to extract structured signal; the math decides what's important.
 
+> Most LLM personality tools are horoscopes with a tech stack. This one isn't.
+
 ### how it compares to the alternative
 
 ```
@@ -61,7 +55,254 @@ Each line clicks through to the supporting evidence — the actual messages that
    what you get                    smooth prose         │    a falsifiable measurement
 ```
 
----
+## What it tells you
+
+- Who in your network is drifting away from you (or getting closer).
+- How your closest friends actually talk to each other when you're not the topic.
+- What people in your life are really like, vs. what they say about themselves.
+- What's changing week-to-week — relationships cooling, tones shifting, alliances forming.
+- Where each person sits relative to your whole network on cognitive style, openness, conscientiousness, and the rest.
+
+## Quickstart
+
+```bash
+ollama pull gpt-oss:20b               # or qwen2.5:7b, llama3.1:8b, aya-expanse:8b — your choice
+cp -r lexicons.example lexicons        # seed the gitignored translation files
+cp config.example.json config.json     # then edit: self_name + handles + aliases
+# drop chat exports into data/   format: YYYY-MM-DD HH:MM | sender | message
+
+cargo build --release
+OLLAMA_MODEL=gpt-oss:20b ./target/release/auspex data/*.txt
+# server starts at http://localhost:8765/ automatically when the pipeline finishes
+```
+
+### Just opening the UI (skip the pipeline)
+
+If the pipeline has already produced `graph.html` and you just want to reopen the UI to navigate existing results — no LLM, no scans, no re-eval — pass `--serve`:
+
+```bash
+./target/release/auspex --serve     # or  -s
+```
+
+This starts the embedded HTTP server on `http://localhost:8765/` against the existing `graph.html`. Useful for: reopening the UI after closing the browser, sharing a single port for multiple browser tabs/sessions, accessing the chat panel without re-running the pipeline. Will exit immediately with an error if `graph.html` doesn't exist yet.
+
+### Re-runs (adding new exports)
+
+Drop additional chat exports into `data/` and re-run the full command. auspex's incremental pipeline does only the work that's actually new:
+
+```bash
+./target/release/auspex data/*.txt    # pipeline + serve
+```
+
+Phase 0 classifies only the new messages, Phase 1 scans only new substantives, downstream phases reuse cache when upstream didn't change. For people whose corpus fingerprint matches the previous run, the entire pipeline short-circuits — their profile is loaded from cache, no LLM work happens. Then the insight engine diffs against the prior snapshot and surfaces only what's genuinely new.
+
+## How to
+
+Recipes for the things you'll actually need to do. Theory lives in the primer below; this section is task-oriented.
+
+### Export chat history from your platforms
+
+The pipeline expects one message per line in `data/*.txt`, format:
+
+```
+2026-04-12 18:32 | alice | hey did you see the climbing video i sent
+2026-04-12 18:33 | you   | yeah that v7 is unreal
+```
+
+Whitespace around the pipes is fine. Timestamps are optional — if missing, the chronological-recency features degrade gracefully but everything else works. Each file can be one person, one channel, or a whole archive; the pipeline groups by sender name regardless.
+
+Per-platform recipes:
+
+**Discord** — use [`DiscordChatExporter`](https://github.com/Tyrrrz/DiscordChatExporter) (CLI or GUI). Export each channel as plain text or CSV, then reshape:
+
+```bash
+# from DiscordChatExporter's CSV export (--format Csv):
+awk -F',' 'NR>1 { gsub(/"/,"",$0); print $1" | "$2" | "$3 }' channel.csv > data/channel.txt
+```
+
+**iMessage** — install [`imessage-exporter`](https://github.com/ReagentX/imessage_exporter), export to TXT, then:
+
+```bash
+imessage-exporter -f txt -o /tmp/imsg
+# imessage-exporter uses "Apr 12, 2026  6:32:14 PM\nFrom Alice\nbody"
+# reshape with a small awk or python script; example python:
+python3 -c "
+import re, sys, glob
+for path in glob.glob('/tmp/imsg/*.txt'):
+  with open(path) as f: text = f.read()
+  # parse blocks ... write to data/<name>.txt in 'YYYY-MM-DD HH:MM | sender | text' format
+"
+```
+
+**WhatsApp** — phone → chat → ⋮ → "Export chat" → "Without media". The export format is `[12/04/26, 18:32:14] Alice: hey`. Reshape:
+
+```bash
+# turn [DD/MM/YY, HH:MM:SS] sender: msg into 'YYYY-MM-DD HH:MM | sender | msg'
+sed -E 's|^\[([0-9]{2})/([0-9]{2})/([0-9]{2}), ([0-9]{2}):([0-9]{2}):[0-9]{2}\] ([^:]+): (.*)$|20\3-\2-\1 \4:\5 | \6 | \7|' chat.txt > data/chat.txt
+```
+
+**Telegram** — Desktop → ⋮ → "Export chat history" → JSON. Then:
+
+```bash
+jq -r '.messages[] | select(.text != "") | "\(.date[:16] | sub("T";" ")) | \(.from) | \(.text | if type=="string" then . else (map(if type=="string" then . else .text end) | join("")) end)"' result.json > data/chat.txt
+```
+
+**Signal** — desktop client doesn't export directly; use [`signal-backup-tools`](https://github.com/bepaald/signalbackup-tools) on an Android backup, dump to CSV, then reshape with the same awk pattern as Discord above.
+
+After reshaping, spot-check with `head data/<file>.txt` to confirm the format matches the example at the top of this section.
+
+### Add a new language to the lexicons
+
+```bash
+# copy any existing language file as a template
+cp lexicons/self_ref/en.txt lexicons/self_ref/de.txt
+
+# edit it — one entry per line, # for comments, blank lines OK
+$EDITOR lexicons/self_ref/de.txt
+
+# repeat for the other categories: other_ref, certainty, hedging,
+# positive, negative, analytical, and intents/<intent_name>/
+
+# next run will log: "lexicon: self_ref loaded (N entries from langs: de, en)"
+```
+
+The filename stem (`de`, `fr`, `es`, whatever) is only a diagnostic label — the loader merges every `.txt` file under each category. Nothing is hardcoded about which languages are supported.
+
+### Switch to a different LLM model
+
+```bash
+ollama pull aya-expanse:8b               # or qwen2.5:7b, llama3.1:8b, gpt-oss:20b, granite3-dense:8b
+OLLAMA_MODEL=aya-expanse:8b ./target/release/auspex data/*.txt
+```
+
+Switching models mid-corpus is safe — the cache is keyed by message ID, not by model. Already-classified messages stay; new messages get the new model. Quick guidance:
+
+- **Multilingual corpus**: `aya-expanse:8b` or `qwen2.5:7b`. Built for cross-language coverage.
+- **English-heavy + want depth**: `gpt-oss:20b` for synthesis prose quality.
+- **Structured-output reliability**: `granite3-dense:8b` — IBM tuned it specifically for function-calling and JSON.
+- **Speed-first, accept some quality loss**: `llama3.1:8b`.
+- **Avoid for this tool**: `llama3.2:3b` and below (multilingual coverage too weak), `phi3:mini` (JSON reliability degrades fast at small sizes).
+
+### Use the in-browser chat panel
+
+Open `http://localhost:8765/`. Press **Ctrl+K** to toggle the chat panel.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+K` / `Cmd+K` | toggle chat panel |
+| `Ctrl+/` / `Cmd+/` | focus the "jump to person" search |
+| `Esc` | close pair panel → sidebar → chat (peels one layer at a time) |
+| `F` | fit graph to view (when not focused in an input) |
+| scroll wheel | zoom graph |
+| drag empty space | pan graph |
+
+Example queries that lean into the data:
+
+- *"what's changing with alice lately?"*
+- *"who in my network is most likely to drift away next, and why?"*
+- *"which of bob's self-claims look inconsistent with how he actually behaves?"*
+- *"compare alice and bob as collaborators — who's more reliable, who's more creative?"*
+- *"what active themes does my network share?"*
+- *"show me anyone whose tone toward me has shifted in the last quartile"*
+
+Don't ask things that require information outside the corpus (current events, what someone is doing right now, anything not in the chat). The system prompt explicitly tells the model not to invent historical figures or generic answers — but a question with no grounding will still produce a thinner reply.
+
+### Reset and start over
+
+Selective wipes — pick what you want to redo:
+
+| Command | What gets redone |
+|---|---|
+| `rm -rf profiles/` | Phase 0–6 from scratch for everyone (most expensive) |
+| `rm -rf insights/` | Snapshots clear; next run treats everything as "new" for the insight feed |
+| `rm -rf index/` | Re-embed every message (expensive — minutes-to-an-hour depending on corpus size) |
+| `rm graph.html` | Just regenerate the UI from existing cached profiles (cheap, no LLM) |
+
+Nuclear option — wipe everything generated, keep your source data + lexicons + config:
+
+```bash
+rm -rf profiles/ insights/ index/ graph.html
+```
+
+Do **not** wipe `data/` (your chat exports), `lexicons/` (your word lists), or `config.json` (your identity). Those are inputs; the tool can't reproduce them.
+
+### Troubleshoot when output looks broken
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Everyone's classifications come back `low-info` | Model too small or wrong language family | Switch to `aya-expanse:8b` (multilingual) or `gpt-oss:20b` (depth) |
+| `is_meta_cognitive` and `is_multi_perspective` are always `false` across all profiles | Model is satisficing on those booleans (known failure on smaller models even with prompt nudges) | Switch to `gpt-oss:20b` or `granite3-dense:8b`; check a sample classification file under `profiles/<name>_classifications.json` to confirm |
+| Phase 0 takes much longer than expected | `OLLAMA_NUM_CTX` set too high for your VRAM, or model is swapping to CPU | Lower context with `OLLAMA_NUM_CTX=8192`, or pick a smaller model |
+| Chat panel shows `Error: Failed to fetch` | Embedded server isn't running, OR you opened `graph.html` via `file://` instead of through the server | Run `./target/release/auspex --serve` and open `http://localhost:8765/` |
+| Themes read like horoscope on someone with thin data | Under ~500 substantive messages isn't enough signal for stable themes | Trust the cited quotes more than the synthesized paragraphs; consider excluding people with too little data from the pipeline (`messages.len() < 10` is the floor; raise it if you want stricter) |
+| A clearly distressing self-claim doesn't fire as `high_stakes_claim` | Claim was tagged `ironic` or `hyperbole` by Phase 0 | Check the self-claim panel for the claim; verdict will show `not-literal`. Edit Phase 0 prompt if you disagree with the classification |
+| All edges look the same color/thickness | Pair interactions need at least 3 adjacent messages between two people to compute meaningfully | Pairs with sparse data get dropped automatically; only people with substantial mutual chat history form visible edges |
+
+### Update existing chat data without wiping caches
+
+Drop new exports into `data/`, re-run:
+
+```bash
+./target/release/auspex data/*.txt
+```
+
+Phase 0 classifies only the new messages (incremental). Phase 1 scans only new substantives (covered set tracked via `support_ids`). Downstream phases reuse cache when upstream didn't change. For people whose corpus fingerprint matches the previous run, the entire pipeline short-circuits and the saved Profile is loaded from `profiles/<name>_profile.json`. The insight engine then diffs against the prior snapshot and surfaces only what's actually new. This is the intended steady-state usage — add data, re-run, read the radar.
+
+## How it works
+
+```
+            chat exports (data/*.txt)
+                       │
+                       ▼
+                  parse_files
+                       │
+         ┌─────────────┴─────────────┐
+         ▼                           ▼
+    fastembed                    by_sender
+    index                            │
+                                     ▼
+                          phase 0  classify (19 fields per message, w/ corpus context)
+                                     │
+                                     ▼
+                          phase 1  observation extraction (cited quotes, verified)
+                                     │
+                                     ▼
+                          phase 2  cluster → themes
+                                     │
+                                     ▼
+                          phase 3  deepen + emit falsification specs
+                                     │
+                                     ▼
+                          phase 4  probe each spec → ValidatedTheme + computed confidence
+                                     │
+                                     ▼
+                          phase 5a cognitive markers (lexical + Phase 0 booleans)
+                          phase 5b Big Five citation panels (no scores)
+                          phase 5c self-claim reconciliation
+                          phase 5  synthesis (no IQ, no MBTI)
+                                     │
+                                     ▼
+                          phase 6  predictions (intent clusters × validated themes)
+                                     │
+                       Profile (provenance through every step)
+                                     │
+            ┌──────────┬─────────────┴─────────────┐
+            ▼          ▼                           ▼
+       cross-person  pair                       insight diff
+       z-score       interactions               vs snapshot
+            │          │                           │
+            └────┬─────┴────┬──────────────────────┘
+                 ▼          ▼
+              graph.html   insights/feed.json
+                 │
+                 ▼
+            embedded HTTP server :8765/
+                 │
+                 ▼
+                you
+```
+
+Re-running with zero new data: pipeline does zero LLM work, just loads cached profiles and re-renders. With new data: Phase 0 classifies only the new messages, Phase 1 scans only new substantives, downstream phases invalidate exactly when they need to, the insight engine diffs against the prior snapshot and emits only what's actually new.
 
 ## This tool exists because most of the alternatives are bad
 
@@ -127,7 +368,7 @@ A theme on someone's profile:
 6. **Pairwise dynamics.** The graph is a real network model. Per-pair: directional reply counts, median latency, initiation balance, tone distribution when addressed-specifically, topic overlap, mentions, baseline vs recent. The "Network" in "Network Intelligence" is not aspirational.
 7. **Incremental + same-origin.** Snapshot-based diff. Embedded HTTP server proxies `/api/*` to local Ollama so the chat panel is same-origin. No CORS dance. No separate process to launch. Re-runs after adding new exports do *only* the work that's actually new — including a fast-path that skips the whole pipeline for people whose corpus fingerprint matches the previous run.
 
-## A primer for newcomers (read this before running)
+## A primer for newcomers (read this before relying on output)
 
 This section explains *what kind of measurement this is*, *why the pipeline is structured the way it is*, and *how to read the output without over-interpreting it.* It is long on purpose. If you skip it, you'll probably misuse the tool.
 
@@ -296,95 +537,6 @@ If you take only one thing from this primer, take this: **auspex measures textua
 Every confident-sounding paragraph the tool produces is bounded by that ceiling. Read with skepticism. Reject claims that don't match the cited evidence. Trust the deltas more than the static labels — what's *changing* in a person's messaging is more reliably real than what someone *is*, because change is anchored in observable temporal signal.
 
 The tool's discipline — provenance, falsification, separated streams, z-scoring, no IQ — is designed to make that ceiling visible and to prevent overclaiming past it. Use it accordingly.
-
-## Quickstart
-
-```bash
-ollama pull gpt-oss:20b               # or qwen2.5:7b, llama3.1:8b, aya-expanse:8b — your choice
-cp -r lexicons.example lexicons        # seed the gitignored translation files
-cp config.example.json config.json     # then edit: self_name + handles + aliases
-# drop chat exports into data/   format: YYYY-MM-DD HH:MM | sender | message
-
-cargo build --release
-OLLAMA_MODEL=gpt-oss:20b ./target/release/auspex data/*.txt
-# server starts at http://localhost:8765/ automatically when the pipeline finishes
-```
-
-### Just opening the UI (skip the pipeline)
-
-If the pipeline has already produced `graph.html` and you just want to reopen the UI to navigate existing results — no LLM, no scans, no re-eval — pass `--serve`:
-
-```bash
-./target/release/auspex --serve     # or  -s
-```
-
-This starts the embedded HTTP server on `http://localhost:8765/` against the existing `graph.html`. Useful for: reopening the UI after closing the browser, sharing a single port for multiple browser tabs/sessions, accessing the chat panel without re-running the pipeline. Will exit immediately with an error if `graph.html` doesn't exist yet.
-
-### Re-runs (adding new exports)
-
-Drop additional chat exports into `data/` and re-run the full command. auspex's incremental pipeline does only the work that's actually new:
-
-```bash
-./target/release/auspex data/*.txt    # pipeline + serve
-```
-
-Phase 0 classifies only the new messages, Phase 1 scans only new substantives, downstream phases reuse cache when upstream didn't change. For people whose corpus fingerprint matches the previous run, the entire pipeline short-circuits — their profile is loaded from cache, no LLM work happens. Then the insight engine diffs against the prior snapshot and surfaces only what's genuinely new.
-
-## How it works
-
-```
-            chat exports (data/*.txt)
-                       │
-                       ▼
-                  parse_files
-                       │
-         ┌─────────────┴─────────────┐
-         ▼                           ▼
-    fastembed                    by_sender
-    index                            │
-                                     ▼
-                          phase 0  classify (19 fields per message, w/ corpus context)
-                                     │
-                                     ▼
-                          phase 1  observation extraction (cited quotes, verified)
-                                     │
-                                     ▼
-                          phase 2  cluster → themes
-                                     │
-                                     ▼
-                          phase 3  deepen + emit falsification specs
-                                     │
-                                     ▼
-                          phase 4  probe each spec → ValidatedTheme + computed confidence
-                                     │
-                                     ▼
-                          phase 5a cognitive markers (lexical + Phase 0 booleans)
-                          phase 5b Big Five citation panels (no scores)
-                          phase 5c self-claim reconciliation
-                          phase 5  synthesis (no IQ, no MBTI)
-                                     │
-                                     ▼
-                          phase 6  predictions (intent clusters × validated themes)
-                                     │
-                       Profile (provenance through every step)
-                                     │
-            ┌──────────┬─────────────┴─────────────┐
-            ▼          ▼                           ▼
-       cross-person  pair                       insight diff
-       z-score       interactions               vs snapshot
-            │          │                           │
-            └────┬─────┴────┬──────────────────────┘
-                 ▼          ▼
-              graph.html   insights/feed.json
-                 │
-                 ▼
-            embedded HTTP server :8765/
-                 │
-                 ▼
-                you
-```
-
-Re-running with zero new data: pipeline does zero LLM work, just loads cached profiles and re-renders. With new data: Phase 0 classifies only the new messages, Phase 1 scans only new substantives, downstream phases invalidate exactly when they need to, the insight engine diffs against the prior snapshot and emits only what's actually new.
 
 ## Module layout
 
